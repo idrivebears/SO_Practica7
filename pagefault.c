@@ -15,6 +15,8 @@ extern struct SYSTEMFRAMETABLE *systemframetable;
 extern struct PROCESSPAGETABLE *ptbr;
 extern struct PROCESSPAGETABLE *gprocesspagetable;
 
+int free_index = 0;
+
 int getfreeframe();
 int swapmemory();
 
@@ -33,7 +35,7 @@ int pagefault(char *vaddress)
     i=countframesassigned();
   
     // Busca un marco libre en el sistema
-    frame=getfreeframe();
+    frame=getfreeframe(pag_del_proceso);
 
     if(frame==-1)
     {
@@ -42,6 +44,7 @@ int pagefault(char *vaddress)
 
 
     (ptbr+pag_del_proceso)->presente=1;
+    (ptbr+pag_del_proceso)->modificado=0;
     (ptbr+pag_del_proceso)->framenumber=frame;
 
 
@@ -49,7 +52,7 @@ int pagefault(char *vaddress)
 }
 
 
-int getfreeframe()
+int getfreeframe(long pag_del_proceso)
 {
     int i;
     // Busca un marco libre en el sistema
@@ -66,44 +69,61 @@ int getfreeframe()
     }
 
     else {
-        i = swapmemory();
+        i = swapmemory(pag_del_proceso);
     }
 
     return i;
 }
 
-int swapmemory()
+int swapmemory(long pag_del_proceso)
 {
-    // buscar el menos usado
-    int i;
-    unsigned long last = ULONG_MAX;
-    FILE *file_swap;
-    int last_index = -1;
 
-    for (i=0; i<RESIDENTSETSIZE/2; i++)
-    {
-        if(ptbr[i].tlastaccess < last) {
-            last_index = i;
-            last = ptbr[i].tlastaccess;
+    int i;
+    free_index++ % 12;
+    FILE *swap_file;
+    fopen("swap", "r+b");
+
+    // escribir en 'swap' contenido de systemframetable[free_index] > swap[free_index *4k]
+    fseek(swap_file, free_index<<12, SEEK_SET);
+    fwrite(systemframetable[free_index].paddress, 4096, 1, swap_file);
+
+    // SWAP
+    fseek(swap_file, free_index<<12, SEEK_SET);
+    char *swpfreeindx = (char *) malloc(4096);
+    fread(swpfreeindx, 4096, 1, swap_file);
+    
+    // leer swappagproc
+    fseek(swap_file, pag_del_proceso<<12, SEEK_SET);
+    char *swppagproc = (char *) malloc(4096);
+    fread(swppagproc, 4096, 1, swap_file);
+    
+    //Escribir swpfreeindx
+    fseek(swap_file, pag_del_proceso<<12,SEEK_SET);
+    fwrite(swpfreeindx, 4096,1,swap_file);
+
+    //Escribir swappagproc
+    fseek(swap_file, free_index<<12,SEEK_SET);
+    fwrite(swppagproc, 4096,1, swap_file);
+
+
+
+    // escribir de swap[free_index *4k] a systemframetable[free_index]
+    fseek(swap_file, free_index<<12, SEEK_SET);
+    fwrite(systemframetable[free_index].paddress, 4096,1 , swap_file);
+
+    fclose(swap_file);
+
+    for(i=0; i < ptlr; i++) {
+        if(ptbr[i].framenumber == free_index) {
+            ptbr[i].presente = 0;
+            ptbr[i].modificado = 0;
+            break;
         }
     }
-    printf(">>MENOS USADO: i:%d val:%d\n", last_index, ptbr[last_index]);
+
+
     
-
-    if(ptbr[last_index].modificado == 1) {
-        //escribir a memoria
-        int FN = ptbr[last_index].framenumber;
-        printf(">>Frame fue modificado, escribiendo a memoria.\n");
-        
-        /*file_swap = fopen("swap", "wb");
-        fwrite(&systemframetable[FN],sizeof(systemframetable[FN]),1, file_swap);*/
-    }
-    
-    ptbr[last_index].presente = 0;
-
-
-    printf(">>Swap completado de frame: %d\n", ptbr[last_index].framenumber);
-    return ptbr[last_index].framenumber;
+    return free_index;
 }
 
 
